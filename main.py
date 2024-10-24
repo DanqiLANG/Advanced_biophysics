@@ -28,22 +28,29 @@ def interaction(cross=1):
            0, 1, 2 correspond to the small, medium, large barrier respectively.
     """
     # TODO maybe use something to distinguish links that are specific to the barrier (to use a different color when plotting)
-    J = np.zeros((12, 12))
-    for i in range(12):
-        for j in range(12):
+    J = np.zeros((13, 13))
+    for i in range(13):
+        for j in range(13):
             # Interactions for all barriers
+            if j == 0 or i == 0:  # 0 means empty, so it does not interact with anything
+                continue
             if j == i+1:
                 J[i, j] = 1
-            elif (i, j) in [(1, 5), (5, 4), (4, 3), (3, 2), (2, 6)]:
+                J[j, i] = 1  # Makes the matrix symmetric
+            elif (i-1, j-1) in [(1, 5), (5, 4), (4, 3), (3, 2), (2, 6)]:  # -1 because the indexes start from 0
                 J[i, j] = 1
-            elif j == i+6:  # The paper indicates i+5, but I think it is i+6 (e.g. 1 should link with 7)
+                J[j, i] = 1
+            elif j == i+6:  # The paper indicates i+5, but I think it is i+6 (e.g. 2 should link with 8, and not 7).
                 J[i, j] = 1
+                J[j, i] = 1
 
             # Interactions that depend on the barrier
-            if cross == 0 and (i, j) in [(5, 8), (4, 9)]:
+            if cross == 0 and (i-1, j-1) in [(5, 8), (4, 9)]:
                 J[i, j] = 1
-            elif cross == 1 and (i, j) in [(5, 8), (3, 10)]:
+                J[j, i] = 1
+            elif cross == 1 and (i-1, j-1) in [(5, 8), (3, 10)]:
                 J[i, j] = 1
+                J[j, i] = 1
     return J
 
 
@@ -76,5 +83,59 @@ def plot_interactions():
     plt.show()
 
 
-# TODO define the assembly (use a list of size 6, n that contains the value (from 1 to 12)) ?
-# TODO code a funtion to compute the total energy of the assembly (to reproduce fig b of p40).
+def create():
+    """
+    Creates the assembly.
+
+    The assembly is represented as an array of size (6, N).
+    The elements are integers from 0 to 12, where 0 means empty, and 1 to 12 a tile of corresponding number.
+    """
+    return np.array([[1, 2, 3, 4, 5, 6]], dtype=int)
+
+
+def add_line(initial, line):
+    """
+    Adds a new line to the assembly.
+
+    The inputs are the assembly, and an array or a list of size 6 to append to the assembly.
+    """
+    # Checks that the new line has the right format
+    if not all([isinstance(elem, int) and elem >=0 and elem <=12 for elem in line]):
+        raise ValueError(f"Invalid elements in added line: {line}.")
+    if len(line) != 6:
+        raise ValueError(f"The added line {line} must be of length 6 (and not {len(line)}).")
+
+    new_line = np.array(line, dtype=int)
+    return np.block([[initial], [new_line]])
+
+
+def energy(assembly):
+    """Compute the energy of the assembly."""
+    J = interaction()  # TODO: see how to get the interaction matrix to avoir recomputing it each time: add an argument ?
+    e = 0
+    a, b = assembly.shape
+
+    # This adds 0 below and on the right of the assembly matrix.
+    # They will give no interaction with the rest of the assembly
+    # but allow to handle the boundaries more easily
+    low = np.zeros(a+1, dtype=int)
+    right = np.zeros(b, dtype=int)
+    A2 = np.block([[assembly], [right]])
+    A = np.column_stack([A2, low])
+
+    # Computation of the energy
+    for i in range(a):  # Loops on the shape of the original assembly
+        for j in range(b):
+            # A has a shape of a+1, b+1, so no out-of-index errors
+            val = A[i, j]  # Type of the block at i, j
+            val_b = A[i+1, j]  # Value of the block below (or to the right in the article's figures)
+            val_r = A[i, j+1]  # Value right (or below in the figure)
+            e += J[val, val_r]  # Interaction on the right
+            e += J[val, val_b]  # Interaction below
+    return e
+
+# TODO test the energy funcion, plot it
+# TODO define a function to compute energy only on the lasts lines, and add to the previous result (to avoid computing the same things, so it is faster)
+# TODO Implement Monte Carlo and evolution of the assembly
+# TODO define a function to remove a line to the assembly
+# TODO function to plot the assembly as an image (and with the interactions ?)
