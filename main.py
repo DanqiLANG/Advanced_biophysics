@@ -4,6 +4,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from matplotlib.colors import Normalize, BoundaryNorm
 
 
 # Customization of the figures parameters
@@ -100,13 +101,18 @@ def add_line(initial, line):
     The inputs are the assembly, and an array or a list of size 6 to append to the assembly.
     """
     # Checks that the new line has the right format
-    if not all([isinstance(elem, int) and elem >=0 and elem <=12 for elem in line]):
+    if not all([isinstance(elem, (int, np.int32)) and elem >= 0 and elem <= 12 for elem in line]):
         raise ValueError(f"Invalid elements in added line: {line}.")
     if len(line) != 6:
         raise ValueError(f"The added line {line} must be of length 6 (and not {len(line)}).")
 
     new_line = np.array(line, dtype=int)
     return np.block([[initial], [new_line]])
+
+
+def remove_line(initial):
+    """Remove the last line of the assembly."""
+    return initial[:-1, :]
 
 
 def energy(assembly):
@@ -134,8 +140,49 @@ def energy(assembly):
             e += J[val, val_b]  # Interaction below
     return e
 
-# TODO test the energy funcion, plot it
-# TODO define a function to compute energy only on the lasts lines, and add to the previous result (to avoid computing the same things, so it is faster)
+
+def evolve(Nstep=100):
+    """
+    Create and simulate the growth of an assembly.
+
+    Nstep is the number of steps.
+    Returns the assembly, and the energy at each step.
+    """
+    A = create()
+    E = np.zeros(Nstep)
+
+    for n in range(Nstep):  # TODO implement the evolution here, for now it just adds random lines
+        line = np.random.randint(0, 13, 6, dtype=int)
+        A = add_line(A, line)
+        E[n] = energy(A)
+
+    return A, E
+
+
+def plot_energy(Nstep=100):
+    """Plot the energy as a function of the step."""
+    A, E = evolve(Nstep)
+    fig, ax = plt.subplots()
+    ax.plot(E)
+    ax.set(title="Energy of the assembly", xlabel="Step", ylabel="Energy")
+    plt.show()
+
+
+def plot_assembly(Nstep=10):  # TODO add interactions ?
+    """Plot the assembly with a colormap."""
+    A, E = evolve(Nstep)
+
+    cmap = mpl.colormaps.get_cmap("viridis")
+    cmap.set_under("w")  # Sets the 0 values to white color.
+    ticks = np.arange(1, 13)  # Renormalize to [1, 12], so 0 are below the min
+    norm = BoundaryNorm(ticks, cmap.N)  # Renormalize and discretize the colormap
+    fig, ax = plt.subplots()
+    img = ax.pcolor(A.T, cmap=cmap, norm=norm)  # Transposed, so that it is plotted like in the paper.
+    fig.colorbar(img, ticks=ticks, norm=norm)
+    ax.set(title="Assembly", xlabel="Line", ylabel="Column")
+    plt.show()
+
+
+
+# TODO if needed, define a function to compute energy only on the lasts lines, and add to the previous result (to avoid computing the same things, so it is faster)
 # TODO Implement Monte Carlo and evolution of the assembly
-# TODO define a function to remove a line to the assembly
-# TODO function to plot the assembly as an image (and with the interactions ?)
