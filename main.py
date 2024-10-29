@@ -4,7 +4,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-from matplotlib.colors import Normalize, BoundaryNorm
+from matplotlib.colors import BoundaryNorm
 
 
 # Customization of the figures parameters
@@ -25,10 +25,12 @@ class Assembly:
     """
     Class for representing the assembmly.
 
-    It is represented as an array of size (6, N).
+    It is represented as an array of size (6, N), accessible with self.chain.
     The elements are integers from 0 to 12, where 0 means empty, and 1 to 12 a tile of corresponding number.
     """
 
+    # TODO: add the possibility to add only one tile, and keep track of empty in last line.
+    # Idea for that: check nb of bonds on each of the 6 accessible sites, attach at random, with higher proba if more bonds.
     def __init__(self, cross=1):
         """
         Creates the assembly, and the interaction matrix.
@@ -38,9 +40,8 @@ class Assembly:
         """
         if cross not in (0, 1, 2):
             raise ValueError(f"The parameter must be equal to 0, 1 or 2 (and not {cross}).")
-        self.chain = np.array([[1, 2, 3, 4, 5, 6]], dtype=int)  # Tile assembly
 
-        J = np.zeros((13, 13))
+        J = np.zeros((13, 13))  # Construction of interaction martix
         for i in range(13):
             for j in range(13):
                 # Interactions for all barriers
@@ -63,6 +64,8 @@ class Assembly:
                 elif cross == 1 and (i-1, j-1) in [(5, 8), (3, 10)]:
                     J[i, j] = 1
                     J[j, i] = 1
+
+        self.chain = np.array([[1, 2, 3, 4, 5, 6]], dtype=int)  # Tile assembly
         self.inter = J  # Interaction matrix
 
     def add_line(self, line):
@@ -81,7 +84,7 @@ class Assembly:
         self.chain = np.block([[self.chain], [new_line]])
 
     def remove_line(self):
-        """Remove the last line of the assembly."""
+        """Removes the last line of the assembly."""
         self.chain = self.chain[:-1, :]
 
     def energy(self):
@@ -107,6 +110,31 @@ class Assembly:
                 e += self.inter[val, val_r]  # Interaction on the right
                 e += self.inter[val, val_b]  # Interaction below
         return e
+
+    def evolve(self, Nstep=100):
+        """
+        Simulates the growth of an assembly.
+
+        Nstep is the number of steps.
+        Returns the assembly, and the energy at each step.
+        """
+        E = np.zeros(Nstep)
+
+        for n in range(Nstep):  # TODO implement the evolution here, for now it just adds random lines
+            line = np.random.randint(0, 13, 6, dtype=int)
+            self.add_line(line)
+            E[n] = self.energy()
+
+        return E
+
+    def disorder(self):
+        """Returns the proportion of disordered rows."""
+        count = 0
+        for line in self.chain:
+            if (any(line != np.array([1, 2, 3, 4, 5, 6], dtype=int))
+                    and any(line != np.array([7, 8, 9, 10, 11, 12], dtype=int))):
+                count += 1
+        return count/len(self.chain)
 
 
 def plot_interaction(cross=1):
@@ -140,27 +168,10 @@ def plot_interactions():
     plt.show()
 
 
-def evolve(Nstep=100, cross=1):
-    """
-    Create and simulate the growth of an assembly.
-
-    Nstep is the number of steps.
-    Returns the assembly, and the energy at each step.
-    """
-    A = Assembly(cross)
-    E = np.zeros(Nstep)
-
-    for n in range(Nstep):  # TODO implement the evolution here, for now it just adds random lines
-        line = np.random.randint(0, 13, 6, dtype=int)
-        A.add_line(line)
-        E[n] = A.energy()
-
-    return A, E
-
-
 def plot_energy(Nstep=100, cross=1):
     """Plot the energy as a function of the step."""
-    A, E = evolve(Nstep)
+    A = Assembly(cross)
+    E = A.evolve(Nstep)
     fig, ax = plt.subplots()
     ax.plot(E)
     ax.set(title="Energy of the assembly", xlabel="Step", ylabel="Energy")
@@ -169,7 +180,8 @@ def plot_energy(Nstep=100, cross=1):
 
 def plot_assembly(Nstep=10, cross=1):  # TODO add interactions ?
     """Plot the assembly with a colormap."""
-    A, E = evolve(Nstep, cross)
+    A = Assembly(cross)
+    A.evolve(Nstep)
 
     cmap = mpl.colormaps.get_cmap("viridis")
     cmap.set_under("w")  # Sets the 0 values to white color.
@@ -180,7 +192,6 @@ def plot_assembly(Nstep=10, cross=1):  # TODO add interactions ?
     fig.colorbar(img, ticks=ticks, norm=norm)
     ax.set(title="Assembly", xlabel="Line", ylabel="Column")
     plt.show()
-
 
 
 # TODO if needed, define a function to compute energy only on the lasts lines, and add to the previous result (to avoid computing the same things, so it is faster)
