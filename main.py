@@ -1,9 +1,19 @@
-"""Program to simulate some results for the biophysics project."""
+#!/usr/bin/env python
+# coding: utf-8
+
+# # Dynamic instability in Self-assembly
+
+# ## Preview of Updation
+# 1. Finish the evolution part evolve(); I use _try_attach/_try_detach to construct the last chain, when it is all occupied/or empty, it is attached/detached from the assmebly
+# 2. I think we should sepicify the directions in the interaction matrix so I changed J matrix to J_NS and J_WE, which corresponds to the vertical and horizontal dirsction respectively
+
+# In[1]:
 
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.animation as animation
 from matplotlib.colors import BoundaryNorm
 
 
@@ -21,6 +31,13 @@ mpl.rcParams["savefig.dpi"] = 300
 mpl.rcParams["figure.figsize"] = (12.8, 7.2)
 
 
+# ## Issues
+# 1. Something I am not sure: inside class Assembly, I comment the line 73, since I thought it depends on the order (e.x. from top-to-down direction, tile 1 is bonded with tile 2, but not the opposite way, that's why we have the order 1-2-3-4...  // but for the horizontal direction, it seems like both way is bonded (e.x. 1-7-1, 2-8-2, etc.
+# 2. I don't know what kf they are using in the paper,so I fail to benchmark it
+
+# In[2]:
+
+
 class Assembly:
     """
     Class for representing the assembmly.
@@ -31,42 +48,49 @@ class Assembly:
 
     # TODO: add the possibility to add only one tile, and keep track of empty in last line.
     # Idea for that: check nb of bonds on each of the 6 accessible sites, attach at random, with higher proba if more bonds.
-    def __init__(self, cross=1):
+    def __init__(self, cross, nonSpec):
         """
         Creates the assembly, and the interaction matrix.
 
         cross: gives which interactions are taken into account. See p40.
                0, 1, 2 correspond to the small, medium, large barrier respectively.
+               
+        nonSpec: consider the nonsecific interations or not.
+
         """
         if cross not in (0, 1, 2):
             raise ValueError(f"The parameter must be equal to 0, 1 or 2 (and not {cross}).")
 
-        J = np.zeros((13, 13))  # Construction of interaction martix
+        J_NS = np.zeros((13, 13))  # Construction of interaction martix, north-south
+        J_WE = np.zeros((13, 13))  # Construction of interaction martix, western-east
         for i in range(13):
             for j in range(13):
                 # Interactions for all barriers
                 if j == 0 or i == 0:  # 0 means empty, so it does not interact with anything
                     continue
                 if j == i+1:
-                    J[i, j] = 1
-                    J[j, i] = 1  # Makes the matrix symmetric
-                elif (i-1, j-1) in [(1, 5), (5, 4), (4, 3), (3, 2), (2, 6)]:  # -1 because the indexes start from 0
-                    J[i, j] = 1
-                    J[j, i] = 1
+                    J_NS[i, j] = 1
+#                     J_NS[j, i] = 1  # Makes the matrix symmetric
+
+                elif nonSpec == True and (i, j) in [(1, 5), (5, 4), (4, 3), (3, 2), (2, 6)]: 
+                    J_NS[i, j] = 1
+
                 elif j == i+6:  # The paper indicates i+5, but I think it is i+6 (e.g. 2 should link with 8, and not 7).
-                    J[i, j] = 1
-                    J[j, i] = 1
+                    J_WE[i, j] = 1
+                    J_WE[j, i] = 1
 
                 # Interactions that depend on the barrier
                 if cross == 0 and (i-1, j-1) in [(5, 8), (4, 9)]:
-                    J[i, j] = 1
-                    J[j, i] = 1
+                    J_WE[i, j] = 1
+                    J_WE[j, i] = 1
                 elif cross == 1 and (i-1, j-1) in [(5, 8), (3, 10)]:
-                    J[i, j] = 1
-                    J[j, i] = 1
+                    J_WE[i, j] = 1
+                    J_WE[j, i] = 1
 
         self.chain = np.array([[1, 2, 3, 4, 5, 6]], dtype=int)  # Tile assembly
-        self.inter = J  # Interaction matrix
+        self.lastchain = np.zeros(6, dtype = int) # initialize the last chain
+        self.inter_NS = J_NS  # Interaction matrix
+        self.inter_WE = J_WE  # Interaction matrix
 
     def add_line(self, line):
         """
@@ -74,14 +98,14 @@ class Assembly:
 
         The inputs are the assembly, and an array or a list of size 6 to append to the assembly.
         """
+        line = np.array(line, dtype=int)
         # Checks that the new line has the right format
-        if not all([isinstance(elem, (int, np.int32)) and elem >= 0 and elem <= 12 for elem in line]):
+        if not all([elem >= 0 and elem <= 12 for elem in line]):
             raise ValueError(f"Invalid elements in added line: {line}.")
         if len(line) != 6:
             raise ValueError(f"The added line {line} must be of length 6 (and not {len(line)}).")
 
-        new_line = np.array(line, dtype=int)
-        self.chain = np.block([[self.chain], [new_line]])
+        self.chain = np.block([[self.chain], [line]])
 
     def remove_line(self):
         """Removes the last line of the assembly."""
@@ -107,25 +131,115 @@ class Assembly:
                 val = A[i, j]  # Type of the block at i, j
                 val_b = A[i+1, j]  # Value of the block below (or to the right in the article's figures)
                 val_r = A[i, j+1]  # Value right (or below in the figure)
-                e += self.inter[val, val_r]  # Interaction on the right
-                e += self.inter[val, val_b]  # Interaction below
+                e += self.inter_WE[val, val_r]  # Interaction on the right
+                e += self.inter_NS[val, val_b]  # Interaction below
         return e
 
-    def evolve(self, Nstep=100):
+    def evolve(self, Nstep, Gmc, Gse, kf):
         """
-        Simulates the growth of an assembly.
-
-        Nstep is the number of steps.
-        Returns the assembly, and the energy at each step.
+        Simulates the growth of an assembly using the kTAM model.
+        
+        Nstep: Number of steps (attachment or detachment)
+        Gmc: Free energy for monomer concentration (controls attachment rate)
+        Gse: Free energy of binding for each bond (controls detachment rate)
+        kf: Frequency factor for attachment and detachment rates
+        
+        Returns:
+            - The energy at each step
+            - A record of the assembly states at each step for visualization
         """
-        E = np.zeros(Nstep)
+        E = np.zeros(Nstep)  # Energy at each step
+        assembly_snapshots = []  # Store snapshots of the assembly for visualization later
 
-        for n in range(Nstep):  # TODO implement the evolution here, for now it just adds random lines
-            line = np.random.randint(0, 13, 6, dtype=int)
-            self.add_line(line)
-            E[n] = self.energy()
+        for n in range(Nstep):
+            if np.random.rand() < 0.5:  # Randomly choose attachment or detachment step (50% chance)
+                self._try_attach(Gmc, kf)  # Attempt to attach a tile
+            else:
+                self._try_detach(Gse, kf)  # Attempt to detach a tile
 
-        return E
+            if np.all(self.lastchain) != 0: #if the last chain is occuied, add it to the assembly
+                self.add_line(self.lastchain)
+                self.lastchain = np.zeros(6, dtype = int) #reset the last chain
+                
+            elif np.sum(self.lastchain) == 0 and len(self.chain)>1:
+                self.lastchain = self.chain[-1,:].reshape(-1)
+                self.remove_line()
+                
+            E[n] = self.energy()  # Recompute energy after each step
+            assembly_snapshots.append(self.chain.copy())  # Save the assembly state
+        
+        self.add_line(self.lastchain)
+
+        return E, assembly_snapshots
+
+    def _try_attach(self, Gmc, kf):
+        """
+        Attempt to attach a tile at a random empty position in the assembly.
+        The attachment rate depends on the number of bonds the tile can form.
+        """
+        # Find empty positions (where lastchain == 0)
+        empty_positions = np.argwhere(self.lastchain == 0)
+
+        if len(empty_positions) == 0:
+            return  # No empty positions to attach a tile
+
+        # Randomly pick an empty position
+        i = empty_positions[np.random.randint(len(empty_positions))]
+
+        # Try attaching a random tile (between 1 and 12)
+        tile = np.random.randint(1, 13)
+
+        # Calculate the number of bonds the tile would form
+        bonds = self._count_bonds(i, tile)
+
+        # Attachment rate based on Gmc and bonds
+        ron = kf * np.exp(-Gmc)
+
+        if np.random.rand() < ron:
+            self.lastchain[i] = tile  # Attach the tile
+
+    def _try_detach(self, Gse, kf):
+        """
+        Attempt to detach a tile from a random occupied position in the assembly.
+        The detachment rate depends on the number of bonds the tile has.
+        """
+        # Find occupied positions (where chain != 0)
+        occupied_positions = np.argwhere(self.lastchain != 0)
+
+        if len(occupied_positions) == 0:
+            return  # No occupied positions to detach a tile
+
+        # Randomly pick an occupied position
+        i = occupied_positions[np.random.randint(len(occupied_positions))]
+
+        tile = self.lastchain[i]
+
+        # Calculate the number of bonds the tile has
+        bonds = self._count_bonds(i, tile)
+
+        # Detachment rate based on Gse and number of bonds
+        roff_b = kf * np.exp(-bonds * Gse)
+
+        if np.random.rand() < roff_b:
+            self.lastchain[i] = 0  # Detach the tile
+
+    def _count_bonds(self, i, tile):
+        """
+        Count the number of bonds a tile at position i would form with its neighbors.
+        """
+        bonds = 0
+        
+        if 0 <= i-1 < self.lastchain.shape: #check the boundary
+            neighbors_tile_NS_Up = self.lastchain[i-1]  # Top neighbors
+            bonds += self.inter_NS[neighbors_tile_NS_Up,tile]
+        if 0 <= i+1 < self.lastchain.shape:
+            neighbors_tile_NS_Down = self.lastchain[i+1] # Bottom neibors
+            bonds += self.inter_NS[tile,neighbors_tile_NS_Down]
+ 
+        neighbor_tile_WE = self.chain[-1,i] #Check the left neighbor
+        bonds += self.inter_WE[neighbor_tile_WE,tile]  # Add interaction if there's a bond
+                
+        return bonds
 
     def disorder(self):
         """Returns the proportion of disordered rows."""
@@ -137,51 +251,23 @@ class Assembly:
         return count/len(self.chain)
 
 
-def plot_interaction(cross=1):
-    """Plots the interaction matrix. cross: indicates which barrier to use."""
-    if cross != 0 and cross != 1:  # Set the argument to 2 if it is different than 0 or 1
-        cross = 2
-    A = Assembly(cross)
-    J = A.inter
-    title_list = ["small", "medium", "large"]
-    title = f"Matrix for {title_list[cross]} barrier"
-
-    fig, ax = plt.subplots()
-    ax.pcolor(J)
-    ax.set(title=title, xlabel="i", ylabel="j")
-    plt.show()
+# In[3]:
 
 
-def plot_interactions():
-    """Plots all of the interaction matrixes."""
-    fig, ax = plt.subplots(1, 3, sharey=True)
-    title_list = ["small", "medium", "large"]
-    for i in range(3):
-        A = Assembly(i)
-        J = A.inter
-        title = f"Matrix for {title_list[i]} barrier"
-        ax[i].pcolor(J)
-        if i == 0:  # Only put the label on y axis on the 1st figure.
-            ax[i].set(title=title, xlabel="i", ylabel="j")
-        else:
-            ax[i].set(title=title, xlabel="i")
-    plt.show()
-
-
-def plot_energy(Nstep=100, cross=1):
+def plot_energy(Nstep, cross, nonSpec, Gmc, Gse, kf):
     """Plot the energy as a function of the step."""
-    A = Assembly(cross)
-    E = A.evolve(Nstep)
+    A = Assembly(cross, nonSpec)
+    E,_ = A.evolve(Nstep, Gmc, Gse, kf)
     fig, ax = plt.subplots()
     ax.plot(E)
     ax.set(title="Energy of the assembly", xlabel="Step", ylabel="Energy")
     plt.show()
 
-
-def plot_assembly(Nstep=10, cross=1):  # TODO add interactions ?
+def plot_assembly(Nstep, cross, nonSpec, Gmc, Gse, kf):
     """Plot the assembly with a colormap."""
-    A = Assembly(cross)
-    A.evolve(Nstep)
+    A = Assembly(cross, nonSpec)
+    A.evolve(Nstep, Gmc, Gse, kf)
+    print(A.chain)
 
     cmap = mpl.colormaps.get_cmap("viridis")
     cmap.set_under("w")  # Sets the 0 values to white color.
@@ -194,5 +280,27 @@ def plot_assembly(Nstep=10, cross=1):  # TODO add interactions ?
     plt.show()
 
 
-# TODO if needed, define a function to compute energy only on the lasts lines, and add to the previous result (to avoid computing the same things, so it is faster)
-# TODO Implement Monte Carlo and evolution of the assembly
+# ## First Try: just sepcific interactions
+# This should return ordered configurations
+
+# In[4]:
+
+
+# Plot the energy evolution
+plot_energy(Nstep=10**5, cross=2, nonSpec = False, Gmc=16, Gse=9.5, kf=5*10**6)
+
+# Plot the assembly configuration after evolution
+plot_assembly(Nstep=10**5, cross=2, nonSpec = False, Gmc=16, Gse=9.5, kf=5*10**6)
+
+
+# ## Stalling: Including non-specific interactions
+
+# In[5]:
+
+
+# Plot the assembly configuration after evolution
+plot_assembly(Nstep=10**5, cross=0, nonSpec = True, Gmc=16, Gse=9.5, kf=5*10**6)
+
+
+# ## Todo
+# implement the t_melt and t_cycle for simulations (p29,2.4)
